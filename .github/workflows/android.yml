@@ -38,8 +38,8 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
+          cache: gradle
 
-  
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
@@ -68,22 +68,33 @@ jobs:
               -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
               -Pandroid.injected.signing.key.alias="$ANDROID_ALIAS" \
               -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
-          
-           else
+          else
             ./gradlew assembleRelease --no-daemon || {
               echo "::warning::Build release gagal, memakai debug"
               ./gradlew assembleDebug --no-daemon
             }
-          
           fi
+
+      - name: Cleanup keystore
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE/release.jks"
 
       - name: Collect APK
         id: apk
         run: |
           mkdir -p "$GITHUB_WORKSPACE/out"
-          find "$ROOT/app/build/outputs/apk" -name "*.apk" -exec cp {} "$GITHUB_WORKSPACE/out/StreamPlus.apk" \;
+          APK_SRC=$(find "$ROOT/app/build/outputs/apk/release" -name "*.apk" ! -name "*unsigned*" | head -1)
+          if [ -z "$APK_SRC" ]; then
+            APK_SRC=$(find "$ROOT/app/build/outputs/apk/release" -name "*.apk" | head -1)
+          fi
+          if [ -z "$APK_SRC" ]; then
+            APK_SRC=$(find "$ROOT/app/build/outputs/apk/debug" -name "*.apk" | head -1)
+          fi
+          [ -n "$APK_SRC" ] || { echo "APK hasil build tidak ditemukan"; exit 1; }
+          cp "$APK_SRC" "$GITHUB_WORKSPACE/out/StreamPlus.apk"
           ls -lh "$GITHUB_WORKSPACE/out"
-          VER=$(grep -oP 'versionName = "\K[^"]+' "$ROOT/app/build.gradle.kts")
+          VER=$(grep -oP 'versionName\s*=\s*"\K[^"]+' "$ROOT/app/build.gradle.kts" | head -1)
+          [ -n "$VER" ] || VER="0.0.0-${{ github.run_number }}"
           echo "version=$VER" >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v4
@@ -99,3 +110,4 @@ jobs:
           name: Stream Plus v${{ steps.apk.outputs.version }}
           files: out/StreamPlus.apk
           make_latest: true
+          
