@@ -1,0 +1,94 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish GitHub Release (v<versionName>)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Jika repo berisi file ZIP (tanpa di-extract), unzip otomatis di sini.
+      # Jika source sudah ter-extract biasa, langkah ini langsung memakainya.
+      - name: Locate / unzip source
+        run: |
+          ZIP=$(find . -maxdepth 1 -iname '*.zip' | head -1)
+          if [ -n "$ZIP" ] && [ -z "$(find . -maxdepth 3 -name gradlew -not -path './.git/*' | head -1)" ]; then
+            echo "Unzipping $ZIP"
+            mkdir -p _src && unzip -q "$ZIP" -d _src
+          fi
+          G=$(find . -maxdepth 4 -name gradlew -not -path './.git/*' | head -1)
+          [ -n "$G" ] || { echo "gradlew tidak ditemukan"; exit 1; }
+          ROOT=$(cd "$(dirname "$G")" && pwd)
+          echo "ROOT=$ROOT" >> $GITHUB_ENV
+          echo "Project root: $ROOT"
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Decode keystore (optional)
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+        run: |
+          if [ -n "$ANDROID_SIGNING_KEY" ]; then
+            echo "$ANDROID_SIGNING_KEY" | tr -d '\n\r ' | base64 --decode > "$GITHUB_WORKSPACE/release.jks"
+            echo "SIGNED=true" >> $GITHUB_ENV
+          else
+            echo "SIGNED=false" >> $GITHUB_ENV
+          fi
+
+      - name: Build APK
+        working-directory: ${{ env.ROOT }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_ALIAS: ${{ secrets.ANDROID_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          if [ "$SIGNED" = "true" ]; then
+            ./gradlew assembleRelease --no-daemon \
+              -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/release.jks" \
+              -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$ANDROID_ALIAS" \
+              -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          else
+            ./gradlew assembleDebug --no-daemon
+          fi
+
+      - name: Collect APK
+        id: apk
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          find "$ROOT/app/build/outputs/apk" -name "*.apk" -exec cp {} "$GITHUB_WORKSPACE/out/StreamPlus.apk" \;
+          ls -lh "$GITHUB_WORKSPACE/out"
+          VER=$(grep -oP 'versionName = "\K[^"]+' "$ROOT/app/build.gradle.kts")
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamPlus-apk
+          path: out/StreamPlus.apk
+
+      - name: Create GitHub Release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.apk.outputs.version }}
+          name: Stream Plus v${{ steps.apk.outputs.version }}
+          files: out/StreamPlus.apk
+          make_latest: true
