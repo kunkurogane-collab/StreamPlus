@@ -68,8 +68,13 @@ jobs:
               -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
               -Pandroid.injected.signing.key.alias="$ANDROID_ALIAS" \
               -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
-          else
-            ./gradlew assembleDebug --no-daemon
+          
+           else
+            ./gradlew assembleRelease --no-daemon || {
+              echo "::warning::Build release gagal, memakai debug"
+              ./gradlew assembleDebug --no-daemon
+            }
+          
           fi
 
       - name: Collect APK
