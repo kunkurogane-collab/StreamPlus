@@ -39,7 +39,9 @@ jobs:
           java-version: "17"
           distribution: temurin
 
-      - uses: android-actions/setup-android@v3
+  
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Decode keystore (optional)
         env:
